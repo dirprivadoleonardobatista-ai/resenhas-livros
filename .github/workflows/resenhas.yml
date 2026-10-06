@@ -1,0 +1,77 @@
+name: resenhas
+
+# 12 partes (os livros sao divididos pelo tamanho), 3 maquinas por vez.
+# A cada 3 horas roda de novo: so pega o que ainda nao foi publicado no release
+# "resenhas" (refaz o que falhou). Quando os 86 estiverem prontos, o proprio
+# workflow se desativa.
+on:
+  push:
+    paths: ["estudio/**", "textos/**"]
+  schedule:
+    - cron: "17 */3 * * *"
+  workflow_dispatch:
+    inputs:
+      livro:
+        description: "Refazer so este livro (numero, ex.: 12). Vazio = todos os pendentes"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        parte: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    concurrency:
+      group: resenhas-${{ matrix.parte }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Instalar ffmpeg e bibliotecas
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg > /dev/null
+          pip install -q "edge-tts==7.2.8" pillow
+      - name: Gerar e publicar os livros desta parte
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TTS_PARALELO: "4"
+          PARTE: ${{ matrix.parte }}
+          PARTES: "12"
+        run: |
+          if [ -n "${{ inputs.livro }}" ]; then
+            if [ "${{ matrix.parte }}" = "0" ]; then
+              python -m estudio.render --livro "${{ inputs.livro }}" --max-minutos 300
+            fi
+          else
+            python -m estudio.render --max-minutos 300
+          fi
+
+  notas:
+    needs: render
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Atualizar a lista do release e desligar quando acabar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          estado=$(python -m estudio.render --notas | tail -1)
+          echo "$estado"
+          if [ "$estado" = "COMPLETO" ]; then
+            gh workflow disable resenhas.yml
+          fi
