@@ -70,6 +70,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          pip install -q pillow
           estado=$(python -m estudio.render --notas | tail -1)
           echo "$estado"
           if [ "$estado" = "COMPLETO" ]; then
